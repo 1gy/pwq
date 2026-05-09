@@ -222,6 +222,14 @@ fn parse_elf_header(r: &Reader, class: Class) -> Result<ElfHeader> {
             "extended section numbering (e_shnum == 0)",
         ));
     }
+    // The mirror invariant: a non-zero shnum with shoff == 0 would walk
+    // section headers starting at file offset 0 (the ELF header itself)
+    // and return garbage symbols.
+    if shnum != 0 && shoff == 0 {
+        return Err(Error::InvalidSection(
+            "e_shnum is non-zero but e_shoff is zero",
+        ));
+    }
     Ok(ElfHeader {
         machine,
         entry,
@@ -759,6 +767,19 @@ mod tests {
         assert!(matches!(
             Elf::from_bytes(&bytes),
             Err(Error::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_shnum_set_with_shoff_zero() {
+        // e_shoff at offset 40 (Elf64 LE u64). Zeroing it while e_shnum
+        // remains non-zero would otherwise read section headers from the
+        // ELF header bytes themselves.
+        let mut bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[("foo", 0x1)]);
+        bytes[40..48].copy_from_slice(&0u64.to_le_bytes());
+        assert!(matches!(
+            Elf::from_bytes(&bytes),
+            Err(Error::InvalidSection(_))
         ));
     }
 
