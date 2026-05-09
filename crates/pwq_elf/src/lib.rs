@@ -394,6 +394,20 @@ mod tests {
         machine: u16,
         symbols: &[(&str, u64)],
     ) -> Vec<u8> {
+        // Catch silent truncation in the Elf32 path early — many fields
+        // are written as `value as u32` below.
+        if class == Class::Elf32 {
+            assert!(
+                entry <= u64::from(u32::MAX),
+                "Elf32 entry 0x{entry:x} does not fit in u32"
+            );
+            for (name, v) in symbols {
+                assert!(
+                    *v <= u64::from(u32::MAX),
+                    "Elf32 symbol {name:?} value 0x{v:x} does not fit in u32"
+                );
+            }
+        }
         let header_size = match class {
             Class::Elf32 => 52usize,
             Class::Elf64 => 64,
