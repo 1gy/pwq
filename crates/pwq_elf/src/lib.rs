@@ -238,10 +238,9 @@ fn parse_section_header(r: &Reader, off: usize, class: Class) -> Result<SectionH
 }
 
 fn section_data<'a>(bytes: &'a [u8], section: &SectionHeader) -> Result<&'a [u8]> {
-    let start = section.sh_offset as usize;
-    let end = start
-        .checked_add(section.sh_size as usize)
-        .ok_or(Error::Truncated)?;
+    let start = usize::try_from(section.sh_offset).map_err(|_| Error::Truncated)?;
+    let size = usize::try_from(section.sh_size).map_err(|_| Error::Truncated)?;
+    let end = start.checked_add(size).ok_or(Error::Truncated)?;
     bytes.get(start..end).ok_or(Error::Truncated)
 }
 
@@ -253,6 +252,12 @@ fn collect_symbols(
 ) -> Result<HashMap<String, u64>> {
     let r = Reader { bytes, endian };
 
+    // Cap allocation at what could plausibly fit in the file. Without this,
+    // a crafted e_shnum can request a multi-GB Vec and OOM the process.
+    let max_shnum = bytes.len() / header.shentsize as usize;
+    if header.shnum as usize > max_shnum {
+        return Err(Error::InvalidSection("e_shnum exceeds file size"));
+    }
     let mut sections = Vec::with_capacity(header.shnum as usize);
     for i in 0..header.shnum {
         let off = header
@@ -263,7 +268,8 @@ fn collect_symbols(
                     .ok_or(Error::Truncated)?,
             )
             .ok_or(Error::Truncated)?;
-        sections.push(parse_section_header(&r, off as usize, class)?);
+        let off = usize::try_from(off).map_err(|_| Error::Truncated)?;
+        sections.push(parse_section_header(&r, off, class)?);
     }
 
     let mut symbols = HashMap::new();
@@ -712,6 +718,18 @@ mod tests {
         // Elf64 header has e_shentsize at offset 58 (LE u16). Default = 64.
         let mut bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[("foo", 0x1)]);
         bytes[58..60].copy_from_slice(&99u16.to_le_bytes());
+        assert!(matches!(
+            Elf::from_bytes(&bytes),
+            Err(Error::InvalidSection(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_e_shnum_exceeding_file_size() {
+        // e_shnum at offset 60 (LE u16). 0xffff sections × 64 bytes each
+        // would need ~4MB; the actual file is only a few hundred bytes.
+        let mut bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[("foo", 0x1)]);
+        bytes[60..62].copy_from_slice(&0xffffu16.to_le_bytes());
         assert!(matches!(
             Elf::from_bytes(&bytes),
             Err(Error::InvalidSection(_))
