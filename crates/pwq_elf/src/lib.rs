@@ -8,6 +8,7 @@ pub enum Error {
     BadMagic,
     UnsupportedClass(u8),
     UnsupportedEndian(u8),
+    Unsupported(&'static str),
     Truncated,
     InvalidSection(&'static str),
     InvalidString,
@@ -20,6 +21,7 @@ impl std::fmt::Display for Error {
             Self::BadMagic => write!(f, "not an ELF file (bad magic)"),
             Self::UnsupportedClass(c) => write!(f, "unsupported ELF class: {c}"),
             Self::UnsupportedEndian(e) => write!(f, "unsupported ELF endian: {e}"),
+            Self::Unsupported(s) => write!(f, "unsupported ELF feature: {s}"),
             Self::Truncated => write!(f, "ELF file truncated"),
             Self::InvalidSection(s) => write!(f, "invalid section: {s}"),
             Self::InvalidString => write!(f, "invalid string in ELF (non-UTF-8 or unterminated)"),
@@ -209,6 +211,16 @@ fn parse_elf_header(r: &Reader, class: Class) -> Result<ElfHeader> {
     };
     if shentsize != expected_shentsize {
         return Err(Error::InvalidSection("unexpected e_shentsize"));
+    }
+    // Per the ELF spec, e_shnum == 0 with a non-zero e_shoff means the
+    // real count is in section[0].sh_size (extended section numbering,
+    // for binaries with >= 0xff00 sections). We don't implement the
+    // extension yet; reject loudly so callers don't see an empty symbol
+    // map and assume the binary genuinely has no symbols.
+    if shnum == 0 && shoff != 0 {
+        return Err(Error::Unsupported(
+            "extended section numbering (e_shnum == 0)",
+        ));
     }
     Ok(ElfHeader {
         machine,
@@ -721,6 +733,18 @@ mod tests {
         assert!(matches!(
             Elf::from_bytes(&bytes),
             Err(Error::InvalidSection(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_extended_section_numbering() {
+        // e_shnum == 0 with e_shoff != 0 signals the real section count
+        // lives in section[0].sh_size; we don't support that yet.
+        let mut bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[("foo", 0x1)]);
+        bytes[60..62].copy_from_slice(&0u16.to_le_bytes());
+        assert!(matches!(
+            Elf::from_bytes(&bytes),
+            Err(Error::Unsupported(_))
         ));
     }
 
