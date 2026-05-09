@@ -1,7 +1,6 @@
 [package]
-name = "pwq"
+name = "pwq_elf"
 version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-pwq_elf.workspace = true
