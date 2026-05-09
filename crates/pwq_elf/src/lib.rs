@@ -679,7 +679,10 @@ mod tests {
     #[test]
     fn cstring_offset_at_end_of_table_errors() {
         // Boundary: offset == bytes.len() yields a 0-length tail with no NUL.
-        assert!(matches!(read_cstring(b"abc\0", 4), Err(Error::InvalidString)));
+        assert!(matches!(
+            read_cstring(b"abc\0", 4),
+            Err(Error::InvalidString)
+        ));
     }
 
     #[test]
