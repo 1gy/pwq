@@ -126,6 +126,7 @@ impl Elf {
     }
 }
 
+const SHT_STRTAB: u32 = 3;
 const SHT_SYMTAB: u32 = 2;
 const SHT_DYNSYM: u32 = 11;
 const SHN_UNDEF: u16 = 0;
@@ -200,6 +201,15 @@ fn parse_elf_header(r: &Reader, class: Class) -> Result<ElfHeader> {
     };
     let shentsize = r.u16(fixed_off + 6)?; // e_shentsize
     let shnum = r.u16(fixed_off + 8)?; // e_shnum
+    // Reject ELFs whose claimed shentsize disagrees with the spec for the
+    // declared class — every later offset calc assumes this matches.
+    let expected_shentsize: u16 = match class {
+        Class::Elf32 => 40,
+        Class::Elf64 => 64,
+    };
+    if shentsize != expected_shentsize {
+        return Err(Error::InvalidSection("unexpected e_shentsize"));
+    }
     Ok(ElfHeader {
         machine,
         entry,
@@ -264,6 +274,13 @@ fn collect_symbols(
         let strtab = sections
             .get(section.sh_link as usize)
             .ok_or(Error::InvalidSection("symbol table sh_link out of range"))?;
+        // Without this check, a crafted sh_link could point at any section
+        // and we'd happily interpret its bytes as null-terminated names.
+        if strtab.sh_type != SHT_STRTAB {
+            return Err(Error::InvalidSection(
+                "symbol table sh_link does not reference a string table",
+            ));
+        }
         let strtab_data = section_data(bytes, strtab)?;
         let symtab_data = section_data(bytes, section)?;
         parse_symbol_table(symtab_data, strtab_data, class, endian, &mut symbols)?;
@@ -687,6 +704,33 @@ mod tests {
         assert!(matches!(
             read_cstring(b"\xff\xfe\0", 0),
             Err(Error::InvalidString)
+        ));
+    }
+
+    #[test]
+    fn rejects_bad_e_shentsize() {
+        // Elf64 header has e_shentsize at offset 58 (LE u16). Default = 64.
+        let mut bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[("foo", 0x1)]);
+        bytes[58..60].copy_from_slice(&99u16.to_le_bytes());
+        assert!(matches!(
+            Elf::from_bytes(&bytes),
+            Err(Error::InvalidSection(_))
+        ));
+    }
+
+    #[test]
+    fn rejects_symtab_sh_link_not_strtab() {
+        // build_elf produces sections [NULL, .shstrtab, .symtab, .strtab]
+        // and sets .symtab.sh_link = 3. Repointing it to section 0 (NULL,
+        // sh_type=SHT_NULL) must trigger the strtab-type check.
+        let mut bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[("foo", 0x1)]);
+        let shoff = u64::from_le_bytes(bytes[40..48].try_into().unwrap()) as usize;
+        // Section [2] = .symtab; sh_link is at offset 40 within the entry.
+        let sh_link_off = shoff + 2 * 64 + 40;
+        bytes[sh_link_off..sh_link_off + 4].copy_from_slice(&0u32.to_le_bytes());
+        assert!(matches!(
+            Elf::from_bytes(&bytes),
+            Err(Error::InvalidSection(_))
         ));
     }
 }
