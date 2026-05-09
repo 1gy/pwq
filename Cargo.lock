@@ -5,3 +5,10 @@ version = 4
 [[package]]
 name = "pwq"
 version = "0.1.0"
+dependencies = [
+ "pwq_elf",
+]
+
+[[package]]
+name = "pwq_elf"
+version = "0.1.0"
