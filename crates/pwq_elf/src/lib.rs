@@ -67,10 +67,10 @@ pub struct Elf {
 
 impl Elf {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
-        Self::from_bytes(fs::read(path)?)
+        Self::from_bytes(&fs::read(path)?)
     }
 
-    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() < 4 || &bytes[0..4] != b"\x7fELF" {
             return Err(Error::BadMagic);
         }
@@ -88,12 +88,9 @@ impl Elf {
             v => return Err(Error::UnsupportedEndian(v)),
         };
 
-        let r = Reader {
-            bytes: &bytes,
-            endian,
-        };
+        let r = Reader { bytes, endian };
         let header = parse_elf_header(&r, class)?;
-        let symbols = collect_symbols(&bytes, &header, class, endian)?;
+        let symbols = collect_symbols(bytes, &header, class, endian)?;
 
         Ok(Self {
             class,
@@ -545,7 +542,7 @@ mod tests {
     #[test]
     fn rejects_non_elf_bytes() {
         assert!(matches!(
-            Elf::from_bytes(b"not an elf file".to_vec()),
+            Elf::from_bytes(b"not an elf file"),
             Err(Error::BadMagic)
         ));
     }
@@ -557,7 +554,7 @@ mod tests {
         bytes[0..4].copy_from_slice(b"\x7fELF");
         bytes[4] = 2;
         bytes[5] = 1;
-        assert!(matches!(Elf::from_bytes(bytes), Err(Error::Truncated)));
+        assert!(matches!(Elf::from_bytes(&bytes), Err(Error::Truncated)));
     }
 
     #[test]
@@ -567,7 +564,7 @@ mod tests {
         bytes[4] = 5;
         bytes[5] = 1;
         assert!(matches!(
-            Elf::from_bytes(bytes),
+            Elf::from_bytes(&bytes),
             Err(Error::UnsupportedClass(5))
         ));
     }
@@ -579,7 +576,7 @@ mod tests {
         bytes[4] = 2;
         bytes[5] = 7;
         assert!(matches!(
-            Elf::from_bytes(bytes),
+            Elf::from_bytes(&bytes),
             Err(Error::UnsupportedEndian(7))
         ));
     }
@@ -593,7 +590,7 @@ mod tests {
             62, // EM_X86_64
             &[("win", 0x4011f6), ("main", 0x40139a)],
         );
-        let elf = Elf::from_bytes(bytes).unwrap();
+        let elf = Elf::from_bytes(&bytes).unwrap();
         assert_eq!(elf.class(), Class::Elf64);
         assert_eq!(elf.endian(), Endian::Little);
         assert_eq!(elf.machine(), 62);
@@ -613,7 +610,7 @@ mod tests {
             3, // EM_386
             &[("foo", 0x8048500)],
         );
-        let elf = Elf::from_bytes(bytes).unwrap();
+        let elf = Elf::from_bytes(&bytes).unwrap();
         assert_eq!(elf.class(), Class::Elf32);
         assert_eq!(elf.entry(), 0x8048000);
         assert_eq!(elf.symbol("foo"), Some(0x8048500));
@@ -628,7 +625,7 @@ mod tests {
             0x16, // EM_S390
             &[("bar", 0x5000)],
         );
-        let elf = Elf::from_bytes(bytes).unwrap();
+        let elf = Elf::from_bytes(&bytes).unwrap();
         assert_eq!(elf.endian(), Endian::Big);
         assert_eq!(elf.symbol("bar"), Some(0x5000));
     }
@@ -642,7 +639,7 @@ mod tests {
             8, // EM_MIPS
             &[("baz", 0x10100)],
         );
-        let elf = Elf::from_bytes(bytes).unwrap();
+        let elf = Elf::from_bytes(&bytes).unwrap();
         assert_eq!(elf.class(), Class::Elf32);
         assert_eq!(elf.endian(), Endian::Big);
         assert_eq!(elf.symbol("baz"), Some(0x10100));
@@ -651,7 +648,7 @@ mod tests {
     #[test]
     fn empty_symbol_table_yields_empty_map() {
         let bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[]);
-        let elf = Elf::from_bytes(bytes).unwrap();
+        let elf = Elf::from_bytes(&bytes).unwrap();
         assert_eq!(elf.symbols().len(), 0);
     }
 
@@ -661,7 +658,7 @@ mod tests {
         // must not drop a defined symbol whose value happens to be 0.
         // Regression test for the previous `value == 0` heuristic.
         let bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[("zero_addr", 0)]);
-        let elf = Elf::from_bytes(bytes).unwrap();
+        let elf = Elf::from_bytes(&bytes).unwrap();
         assert_eq!(elf.symbol("zero_addr"), Some(0));
     }
 
