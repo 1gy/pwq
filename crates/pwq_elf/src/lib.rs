@@ -159,13 +159,16 @@ struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
+    fn read_n<const N: usize>(&self, off: usize) -> Result<[u8; N]> {
+        self.bytes
+            .get(off..)
+            .and_then(|tail| tail.first_chunk::<N>())
+            .copied()
+            .ok_or(Error::Truncated)
+    }
+
     fn u16(&self, off: usize) -> Result<u16> {
-        let arr: [u8; 2] = self
-            .bytes
-            .get(off..off + 2)
-            .ok_or(Error::Truncated)?
-            .try_into()
-            .unwrap();
+        let arr = self.read_n::<2>(off)?;
         Ok(match self.endian {
             Endian::Little => u16::from_le_bytes(arr),
             Endian::Big => u16::from_be_bytes(arr),
@@ -173,12 +176,7 @@ impl<'a> Reader<'a> {
     }
 
     fn u32(&self, off: usize) -> Result<u32> {
-        let arr: [u8; 4] = self
-            .bytes
-            .get(off..off + 4)
-            .ok_or(Error::Truncated)?
-            .try_into()
-            .unwrap();
+        let arr = self.read_n::<4>(off)?;
         Ok(match self.endian {
             Endian::Little => u32::from_le_bytes(arr),
             Endian::Big => u32::from_be_bytes(arr),
@@ -186,12 +184,7 @@ impl<'a> Reader<'a> {
     }
 
     fn u64(&self, off: usize) -> Result<u64> {
-        let arr: [u8; 8] = self
-            .bytes
-            .get(off..off + 8)
-            .ok_or(Error::Truncated)?
-            .try_into()
-            .unwrap();
+        let arr = self.read_n::<8>(off)?;
         Ok(match self.endian {
             Endian::Little => u64::from_le_bytes(arr),
             Endian::Big => u64::from_be_bytes(arr),
