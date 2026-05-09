@@ -137,6 +137,7 @@ impl Elf {
 
 const SHT_SYMTAB: u32 = 2;
 const SHT_DYNSYM: u32 = 11;
+const SHN_UNDEF: u16 = 0;
 
 struct ElfHeader {
     machine: u16,
@@ -300,15 +301,19 @@ fn parse_symbol_table(
 
     let mut off = 0;
     while off < symtab.len() {
-        let (name_off, value) = match class {
-            Class::Elf32 => (r.u32(off)?, r.u32(off + 4)? as u64),
-            // 64-bit Sym layout reorders value/size after info/other/shndx.
-            Class::Elf64 => (r.u32(off)?, r.u64(off + 8)?),
+        // 32-bit and 64-bit Sym layouts differ; in 64-bit, value/size move
+        // after info/other/shndx so the field offsets are not the same.
+        let (name_off, value, shndx) = match class {
+            Class::Elf32 => (r.u32(off)?, r.u32(off + 4)? as u64, r.u16(off + 14)?),
+            Class::Elf64 => (r.u32(off)?, r.u64(off + 8)?, r.u16(off + 6)?),
         };
         off += entry_size;
 
-        // Skip the NULL entry and undefined externs (e.g. unresolved libc imports).
-        if name_off == 0 || value == 0 {
+        // Drop entries that don't refer to a defined location: the leading
+        // NULL entry, and undefined externs (e.g. unresolved libc imports
+        // in .dynsym). A defined symbol whose address happens to be 0 must
+        // be kept, so we can't filter on `value == 0`.
+        if shndx == SHN_UNDEF {
             continue;
         }
         let name = read_cstring(strtab, name_off as usize)?;
@@ -654,6 +659,16 @@ mod tests {
         let bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[]);
         let elf = Elf::from_bytes(bytes).unwrap();
         assert!(elf.symbols().is_empty());
+    }
+
+    #[test]
+    fn symbol_with_zero_address_is_kept_when_defined() {
+        // build_elf assigns shndx=1 to every symbol (defined). The parser
+        // must not drop a defined symbol whose value happens to be 0.
+        // Regression test for the previous `value == 0` heuristic.
+        let bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[("zero_addr", 0)]);
+        let elf = Elf::from_bytes(bytes).unwrap();
+        assert_eq!(elf.symbol("zero_addr"), Some(0));
     }
 
     #[test]
