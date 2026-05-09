@@ -673,13 +673,26 @@ mod tests {
 
     #[test]
     fn cstring_unterminated_string_errors() {
-        // Direct unit test on the helper, since constructing this via build_elf
-        // is awkward — feed a non-NUL-terminated buffer.
+        // Constructing this via build_elf is awkward — feed the helper directly.
         assert!(matches!(read_cstring(b"abc", 0), Err(Error::InvalidString)));
     }
 
     #[test]
     fn cstring_offset_out_of_range_errors() {
         assert!(matches!(read_cstring(b"abc\0", 99), Err(Error::Truncated)));
+    }
+
+    #[test]
+    fn cstring_offset_at_end_of_table_errors() {
+        // Boundary: offset == bytes.len() yields a 0-length tail with no NUL.
+        assert!(matches!(read_cstring(b"abc\0", 4), Err(Error::InvalidString)));
+    }
+
+    #[test]
+    fn cstring_non_utf8_returns_invalid_string() {
+        assert!(matches!(
+            read_cstring(b"\xff\xfe\0", 0),
+            Err(Error::InvalidString)
+        ));
     }
 }
