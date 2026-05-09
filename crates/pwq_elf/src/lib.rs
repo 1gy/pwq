@@ -44,13 +44,13 @@ impl From<std::io::Error> for Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Class {
     Elf32,
     Elf64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Endian {
     Little,
     Big,
@@ -58,7 +58,6 @@ pub enum Endian {
 
 #[derive(Debug)]
 pub struct Elf {
-    bytes: Vec<u8>,
     class: Class,
     endian: Endian,
     machine: u16,
@@ -97,7 +96,6 @@ impl Elf {
         let symbols = collect_symbols(&bytes, &header, class, endian)?;
 
         Ok(Self {
-            bytes,
             class,
             endian,
             machine: header.machine,
@@ -126,12 +124,8 @@ impl Elf {
         self.symbols.get(name).copied()
     }
 
-    pub fn symbols(&self) -> &HashMap<String, u64> {
-        &self.symbols
-    }
-
-    pub fn bytes(&self) -> &[u8] {
-        &self.bytes
+    pub fn symbols(&self) -> impl ExactSizeIterator<Item = (&str, u64)> + '_ {
+        self.symbols.iter().map(|(k, &v)| (k.as_str(), v))
     }
 }
 
@@ -207,8 +201,8 @@ fn parse_elf_header(r: &Reader, class: Class) -> Result<ElfHeader> {
             (entry, shoff, 52)
         }
     };
-    let shentsize = r.u16(fixed_off + 6)?;
-    let shnum = r.u16(fixed_off + 8)?;
+    let shentsize = r.u16(fixed_off + 6)?; // e_shentsize
+    let shnum = r.u16(fixed_off + 8)?; // e_shnum
     Ok(ElfHeader {
         machine,
         entry,
@@ -658,7 +652,7 @@ mod tests {
     fn empty_symbol_table_yields_empty_map() {
         let bytes = build_elf(Class::Elf64, Endian::Little, 0, 62, &[]);
         let elf = Elf::from_bytes(bytes).unwrap();
-        assert!(elf.symbols().is_empty());
+        assert_eq!(elf.symbols().len(), 0);
     }
 
     #[test]
