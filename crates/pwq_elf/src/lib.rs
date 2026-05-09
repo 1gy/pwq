@@ -365,7 +365,9 @@ fn read_cstring(bytes: &[u8], offset: usize) -> Result<String> {
         .iter()
         .position(|&b| b == 0)
         .ok_or(Error::InvalidString)?;
-    String::from_utf8(tail[..end].to_vec()).map_err(|_| Error::InvalidString)
+    std::str::from_utf8(&tail[..end])
+        .map(str::to_owned)
+        .map_err(|_| Error::InvalidString)
 }
 
 #[cfg(test)]
